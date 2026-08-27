@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datasets
+data/
+datasets/
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Environment variables / secrets
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
