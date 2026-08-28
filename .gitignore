@@ -11,10 +11,11 @@ venv/
 .ipynb_checkpoints/
 
 # Datasets
-data/
-datasets/
+/data/
+/datasets/
 
-# Model weights
+# Model weights / checkpoints
+checkpoints/
 *.pt
 *.pth
 *.ckpt
@@ -31,3 +32,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local test files
+test.jpeg
