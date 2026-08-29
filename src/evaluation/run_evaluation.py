@@ -2,7 +2,7 @@
 CLI entry point for running the common evaluator on a checkpoint.
 
 Usage:
-    python src/run_evaluation.py \
+    python src/evaluation/run_evaluation.py \
         --checkpoint checkpoints/baseline_best.pt \
         --model-name Baseline \
         --external-samples 200
