@@ -28,7 +28,7 @@ So your model needs to:
 
 example:
 ```bash
-python src/evaluation/run_evaluation.py \
+PYTHONPATH=src python src/evaluation/run_evaluation.py \
   --checkpoint checkpoints/baseline_best.pt \
   --model-name Baseline \
   --external-samples 200

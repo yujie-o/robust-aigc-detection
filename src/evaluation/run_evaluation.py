@@ -1,17 +1,3 @@
-"""
-CLI entry point for running the common evaluator on a checkpoint.
-
-Usage:
-    python src/evaluation/run_evaluation.py \
-        --checkpoint checkpoints/baseline_best.pt \
-        --model-name Baseline \
-        --external-samples 200
-
-Produces:
-    - results/<model_name>_conditions.json (full per-condition predictions)
-    - Appends row to results/summary_table.md
-"""
-
 import argparse
 import json
 from pathlib import Path
