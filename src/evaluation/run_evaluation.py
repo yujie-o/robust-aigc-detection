@@ -7,7 +7,7 @@ from transformers import AutoProcessor
 
 from train import split_samples, SAMPLES_PER_CLASS, VAL_RATIO, SEED
 from data.sid_dataset import load_balanced_sid_subset
-from data.wildfake_dataset import load_balanced_wildfake_subset
+from data.wildfake_dataset_download import load_balanced_wildfake_subset
 
 from evaluation.evaluator import (
     load_model_for_eval,

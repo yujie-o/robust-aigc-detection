@@ -1,5 +1,5 @@
+import argparse
 import random
-import re
 from PIL import Image
 from modelscope.msdatasets import MsDataset
 from torch.utils.data import Dataset
@@ -8,9 +8,6 @@ DATASET_NAME = "hy2628982280/WildFake"
 
 
 class WildFakeSubset(Dataset):
-    """
-    Simple PyTorch dataset containing selected WildFake samples.
-    """
 
     def __init__(self, samples):
         self.samples = samples
@@ -21,14 +18,12 @@ class WildFakeSubset(Dataset):
     def __getitem__(self, index):
         item = self.samples[index]
 
-        # Handle PIL Image or image file path if loaded as a string
         image_data = item.get("image") or item.get("Image_path")
         if isinstance(image_data, str):
             image = Image.open(image_data).convert("RGB")
         else:
             image = image_data.convert("RGB")
 
-        # Map IsFake column: 0 = Real, 1 = Fake
         label = int(item["IsFake"])
 
         return image, label
@@ -37,11 +32,12 @@ class WildFakeSubset(Dataset):
 def load_balanced_wildfake_subset(
     samples_per_class=100,
     seed=42,
-    target_real_arch=None,  
-    target_ai_arch=None,    
+    target_real_arch=None,
+    target_ai_arch=None,
 ):
     """
-    Stream a balanced subset of WildFake using ModelScope.
+    Download a balanced WildFake subset via ModelScope, filtered to only
+    the requested architectures (e.g. COCO for real, DALL-E for AI-generated).
 
     Labels:
         IsFake = 0 (Real)
@@ -50,41 +46,42 @@ def load_balanced_wildfake_subset(
     Args:
         samples_per_class: Target number of images for each class.
         seed: Random seed for shuffling.
-        target_real_arch: Filter specific real source (e.g. for organiser validation).
-        target_ai_arch: Filter specific generator (e.g. for organiser validation).
+        target_real_arch: Filter specific real source (e.g. "COCO").
+        target_ai_arch: Filter specific generator (e.g. "DALL E Advanced").
 
     Returns:
         Equal numbers of label 0 and label 1 samples.
     """
-    print(f"Streaming {DATASET_NAME} via ModelScope...")
+    print(f"Downloading {DATASET_NAME} via ModelScope...")
 
-    # Load streaming dataset from ModelScope
-    dataset = MsDataset.load(
-        DATASET_NAME,
-        subset_name="default",
-        split="train",
-        use_streaming=True,
-    )
+    #Dataset Download
+    ds = MsDataset.load(DATASET_NAME, subset_name='default', split='train')
+    #You can configure subset_name and split as needed, refer to the "Quick Use" sample code
 
     real_samples = []
     ai_samples = []
 
-    # Iterate through the streaming generator
-    for item in dataset:
-        is_fake = int(item.get("IsFake", 0))
+    for item in ds:
+        raw_is_fake = str(item.get("IsFake", "")).strip()
+        if not raw_is_fake.isdigit():
+            continue
+
+        is_fake = int(raw_is_fake)
         arch = str(item.get("Architecture", "")).strip()
 
-        # Filter and collect Real images (IsFake == 0)
-        if is_fake == 0 and len(real_samples) < samples_per_class:
-            if target_real_arch is None or re.sub(r"[^a-z0-9]", "", target_real_arch.lower()) in re.sub(r"[^a-z0-9]", "", arch.lower()):
+        # Only keep rows matching the requested architectures (COCO / DALL-E)
+        if is_fake == 0:
+            if target_real_arch is not None and target_real_arch.lower() not in arch.lower():
+                continue
+            if len(real_samples) < samples_per_class:
                 real_samples.append(item)
 
-        # Filter and collect AI images (IsFake == 1)
-        elif is_fake == 1 and len(ai_samples) < samples_per_class:
-            if target_ai_arch is None or re.sub(r"[^a-z0-9]", "", target_ai_arch.lower()) in re.sub(r"[^a-z0-9]", "", arch.lower()):
+        elif is_fake == 1:
+            if target_ai_arch is not None and target_ai_arch.lower() not in arch.lower():
+                continue
+            if len(ai_samples) < samples_per_class:
                 ai_samples.append(item)
 
-        # Progress reporting
         total_collected = len(real_samples) + len(ai_samples)
         if total_collected > 0 and total_collected % 50 == 0:
             print(
@@ -92,7 +89,6 @@ def load_balanced_wildfake_subset(
                 end="",
             )
 
-        # Stop early once quota is satisfied
         if len(real_samples) >= samples_per_class and len(ai_samples) >= samples_per_class:
             break
 
@@ -107,8 +103,25 @@ def load_balanced_wildfake_subset(
 
     samples = real_samples + ai_samples
 
-    # Shuffle the final balanced subset reproducibly
     rng = random.Random(seed)
     rng.shuffle(samples)
 
     return samples
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Download and cache the WildFake dataset (COCO/DALL-E subset)."
+    )
+    parser.add_argument("--samples-per-class", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--target-real-arch", default="COCO")
+    parser.add_argument("--target-ai-arch", default="DALL E Advanced")
+    args = parser.parse_args()
+
+    load_balanced_wildfake_subset(
+        samples_per_class=args.samples_per_class,
+        seed=args.seed,
+        target_real_arch=args.target_real_arch,
+        target_ai_arch=args.target_ai_arch,
+    )
