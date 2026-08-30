@@ -14,9 +14,10 @@ from data.sid_dataset import SIDSubset, load_balanced_sid_subset
 
 SEED = 42
 
-SAMPLES_PER_CLASS = 1000
 
 VAL_RATIO = 0.2
+
+SAMPLES_PER_CLASS = 500
 
 BATCH_SIZE = 4
 
@@ -31,6 +32,7 @@ CHECKPOINT_PATH = os.path.join(
     "hybrid_best.pt",
 )
 
+
 def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
     '''
     Args:
@@ -43,7 +45,7 @@ def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
     patches = nnf.unfold(img, kernel_size=patch_size, padding=0, stride=patch_size)
 
     shuffled = []
-    for i in range(img.shape(0)):
+    for i in range(img.shape[0]):
         num_patches = patches.shape[-1]
         new_order = torch.randperm(num_patches)
         shuffled.append(patches[i:i+1, :, new_order])
@@ -53,9 +55,11 @@ def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
     out = nnf.fold(shuffled_patches, img.shape[-2:], kernel_size=patch_size, padding=0, stride=patch_size)
     return out
 
+
 def set_seed(seed):
     random.seed(seed)
     torch.manual_seed(seed)
+
 
 def split_samples(samples, val_ratio=0.2):
     real = [x for x in samples if int(x["label"]) == 0]
@@ -104,7 +108,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         logits = model(pixel_values, patch_values)
 
-        loss = criterion(logits, labels)
+        loss = criterion(logits.squeeze(-1), labels)
 
         loss.backward()
 
@@ -126,15 +130,16 @@ def evaluate(model, loader, device):
         for pixel_values, labels in loader:
 
             pixel_values = pixel_values.to(device)
+            patch_values = patch_shuffle(pixel_values).to(device)
 
-            logits = model(pixel_values)
+            logits = model(pixel_values, patch_values)
 
-            probs = torch.sigmoid(logits)
+            probs = torch.sigmoid(logits.squeeze(-1))
 
             all_labels.extend(labels.tolist())
 
             all_probs.extend(probs.cpu().tolist())
-                
+
     auc = roc_auc_score(all_labels, all_probs)
 
     return auc
@@ -150,14 +155,14 @@ def main():
     processor = (AutoProcessor.from_pretrained(MODEL_NAME))
 
     print("Loading SID_Set subset...")
-    samples = load_balanced_sid_subset(samples_per_class=SAMPLES_PER_CLASS,seed=SEED)
+    samples = load_balanced_sid_subset(samples_per_class=SAMPLES_PER_CLASS, seed=SEED)
     train_samples, val_samples = split_samples(samples, VAL_RATIO)
     print("Train samples:", len(train_samples))
     print("Validation samples:", len(val_samples))
     train_dataset = SIDSubset(train_samples)
     val_dataset = SIDSubset(val_samples)
 
-    collate_fn = ( make_collate_fn(processor))
+    collate_fn = (make_collate_fn(processor))
 
     train_loader = DataLoader(
         train_dataset,
@@ -173,7 +178,7 @@ def main():
         collate_fn=collate_fn,
     )
 
-    print("Loading baseline detector...")
+    print("Loading hybrid detector...")
 
     model = PatchShuffle(freeze_backbone=True).to(device)
 
