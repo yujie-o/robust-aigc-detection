@@ -1,5 +1,0 @@
-P2-a NN Classifier
-k=5
-Bank size: 1600
-Val size: 400
-Val ROC-AUC: 0.9818

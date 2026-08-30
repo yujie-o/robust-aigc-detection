@@ -37,8 +37,8 @@ class WildFakeSubset(Dataset):
 def load_balanced_wildfake_subset(
     samples_per_class=100,
     seed=42,
-    target_real_arch=None,  
-    target_ai_arch=None,    
+    target_real_arch=None,
+    target_ai_arch=None,
 ):
     """
     Stream a balanced subset of WildFake using ModelScope.
@@ -71,7 +71,10 @@ def load_balanced_wildfake_subset(
 
     # Iterate through the streaming generator
     for item in dataset:
-        is_fake = int(item.get("IsFake", 0))
+        try:
+            is_fake = int(item.get("IsFake", 0))
+        except (ValueError, TypeError):
+            continue  # skip header row or malformed entries
         arch = str(item.get("Architecture", "")).strip()
 
         # Filter and collect Real images (IsFake == 0)

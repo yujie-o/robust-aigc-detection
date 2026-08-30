@@ -1,14 +1,18 @@
 """
-CLI entry point for running the common evaluator on a checkpoint.
+CLI entry point for running the common evaluator on the P2-a NN classifier.
+
+Copy of src/evaluation/run_evaluation.py with two changes:
+  1. Imports NNClassifierModel
+  2. Passes model_class=NNClassifierModel to load_model_for_eval
 
 Usage:
-    python src/run_evaluation.py \
-        --checkpoint checkpoints/baseline_best.pt \
-        --model-name Baseline \
+    python experiments/generalisation/run_p2_evaluation.py \
+        --checkpoint checkpoints/p2a_nn_best.pt \
+        --model-name P2a-NN \
         --external-samples 200
 
 Produces:
-    - results/<model_name>_conditions.json (full per-condition predictions)
+    - results/<model_name>_conditions.json
     - Appends row to results/summary_table.md
 """
 
@@ -19,22 +23,18 @@ from pathlib import Path
 import torch
 from transformers import AutoProcessor
 
-# This file lives at src/evaluation/run_evaluation.py, but train.py, data/,
-# models/, and experiments/ all live directly under src/. Add src/ to the
-# path so `from train import ...`, `from data...`, etc. resolve regardless
-# of the working directory this script is launched from.
+# Add src/ and repo root to sys.path so imports resolve regardless of CWD
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
-# experiments/ (e.g. experiments.generalisation.organiser_eval_loader) lives
-# at the repo root, not under src/, so the root needs to be on the path too.
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from train import split_samples, SAMPLES_PER_CLASS, VAL_RATIO, SEED
 from data.sid_dataset import load_balanced_sid_subset
 from experiments.generalisation.organiser_eval_loader import load_organiser_eval_samples
+from experiments.generalisation.nn_classifier_model import NNClassifierModel
 
 from evaluation.evaluator import (
     load_model_for_eval,
@@ -51,7 +51,7 @@ from evaluation.transforms import TRANSFORM_CONDITIONS
 from models.baseline import MODEL_NAME
 
 
-RESULTS_DIR = Path("results")
+RESULTS_DIR = ROOT_DIR / "results"
 SUMMARY_TABLE_PATH = RESULTS_DIR / "summary_table.md"
 
 TABLE_HEADER = (
@@ -82,13 +82,6 @@ def get_external_eval_samples(samples_per_class: int = 200, seed: int = 42):
     Organiser-provided WildFake external validation subset:
       - Real: COCO val2017 images
       - AI: DALLE3 images with IsAdvanced=1
-
-    Uses the verified organiser_eval_loader (comma-delimited CSVs, val2017
-    filter, local coco.zip/DALLE.zip image reads) rather than the untested
-    data.wildfake_dataset loader, so results are actually correct.
-
-    Already returns samples in the exact shape the evaluator expects:
-        [{"image": PIL.Image, "label": 0 or 1, "path": str}, ...]
     """
     return load_organiser_eval_samples(
         samples_per_class=samples_per_class,
@@ -99,8 +92,8 @@ def get_external_eval_samples(samples_per_class: int = 200, seed: int = 42):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True, help="Path to model .pt weights")
-    parser.add_argument("--model-name", required=True, help="Row label: Baseline / P2 / P3 / P4 / Final")
-    parser.add_argument("--external-samples", type=int, default=200, help="Samples per class for WildFake benchmark")
+    parser.add_argument("--model-name", required=True, help="Row label")
+    parser.add_argument("--external-samples", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=16)
     args = parser.parse_args()
 
@@ -108,10 +101,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Evaluation Device:", device)
 
-    print(f"Loading checkpoint: {args.checkpoint}")
-    model = load_model_for_eval(args.checkpoint, device)
+    print(f"Loading NN classifier checkpoint: {args.checkpoint}")
+    model = load_model_for_eval(args.checkpoint, device, model_class=NNClassifierModel)
 
-    # 1. Internal Robustness Evaluation (SID_Set Held-out Split across 6 conditions)
+    # 1. Internal Robustness Evaluation (SID_Set Held-out Split across conditions)
     print("\n--- Running Internal Robustness Evaluation (SID_Set) ---")
     internal_samples = get_internal_eval_samples()
     print(f"Loaded {len(internal_samples)} internal validation samples.")
@@ -138,7 +131,7 @@ def main():
     external_auc = ext_result["auc"]
     external_predictions = ext_result["predictions"]
 
-    # 2b. error analysis
+    # 2b. Error analysis
     degradation_by_group = compute_degradation(summary)
     biggest_degradation_group = find_biggest_degradation(summary)
     jpeg_trend_result = jpeg_trend(condition_results)
@@ -151,7 +144,7 @@ def main():
     if gap is not None:
         print(f"Internal clean AUC - External AUC gap: {gap:.4f}")
 
-    # 3. Save full JSON details for error analysis
+    # 3. Save full JSON details
     output_path = RESULTS_DIR / f"{args.model_name}_conditions.json"
     with open(output_path, "w") as f:
         json.dump(

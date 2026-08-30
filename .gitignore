@@ -35,3 +35,6 @@ Thumbs.db
 
 # Local test files
 test.jpeg
+experiments/generalisation/wildfake_cache/
+
+wildfake_zips/

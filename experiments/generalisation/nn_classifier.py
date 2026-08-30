@@ -67,17 +67,25 @@ def main():
     train_loader = DataLoader(SIDSubset(train_samples), batch_size=BATCH_SIZE, collate_fn=collate)
     val_loader = DataLoader(SIDSubset(val_samples), batch_size=BATCH_SIZE, collate_fn=collate)
 
+    results_dir = os.path.join(os.path.dirname(__file__), "results")
+    os.makedirs(results_dir, exist_ok=True)
+
     print("Building feature bank from train set...")
     bank, bank_labels = extract_features(backbone, train_loader, device)
+    torch.save({"features": bank, "labels": bank_labels},
+               os.path.join(results_dir, "feature_bank.pt"))
+    print(f"Saved feature bank ({bank.shape[0]} features) to results/feature_bank.pt")
+
     print("Extracting val features...")
     val_feats, val_labels = extract_features(backbone, val_loader, device)
+    torch.save({"features": val_feats, "labels": val_labels},
+               os.path.join(results_dir, "val_features.pt"))
+    print(f"Saved val features ({val_feats.shape[0]} features) to results/val_features.pt")
 
     probs = nn_classify(val_feats, bank, bank_labels, k=TOP_K)
     auc = roc_auc_score(val_labels.tolist(), probs.tolist())
     print(f"\nP2-a NN Classifier val ROC-AUC (k={TOP_K}): {auc:.4f}")
 
-    results_dir = os.path.join(os.path.dirname(__file__), "results")
-    os.makedirs(results_dir, exist_ok=True)
     with open(os.path.join(results_dir, "p2a_nn_results.txt"), "w") as f:
         f.write(f"P2-a NN Classifier\nk={TOP_K}\nBank size: {len(bank_labels)}\n"
                 f"Val size: {len(val_labels)}\nVal ROC-AUC: {auc:.4f}\n")
