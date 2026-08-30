@@ -14,19 +14,22 @@ from data.sid_dataset import SIDSubset, load_balanced_sid_subset
 
 SEED = 42
 
-SAMPLES_PER_CLASS = 1000
+SAMPLES_PER_CLASS = 500
 
 VAL_RATIO = 0.2
 
 BATCH_SIZE = 4
 
-EPOCHS = 1
+EPOCHS = 3
 
 LEARNING_RATE = 1e-3
+
+SHUFFLE_PROB = 0.5
 
 CHECKPOINT_DIR = "checkpoints"
 
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "patch_shuffle_aug_best.pt")
+
 
 def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
     '''
@@ -40,7 +43,7 @@ def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
     patches = nnf.unfold(img, kernel_size=patch_size, padding=0, stride=patch_size)
 
     shuffled = []
-    for i in range(img.shape(0)):
+    for i in range(img.shape[0]):
         num_patches = patches.shape[-1]
         new_order = torch.randperm(num_patches)
         shuffled.append(patches[i:i+1, :, new_order])
@@ -52,9 +55,10 @@ def patch_shuffle(img: torch.Tensor, patch_size: int = 16):
 
 
 class PatchShuffleDataset(Dataset):
-    def __init__(self, samples, apply_to_val: bool = False):
+    def __init__(self, samples, apply_to_val: bool = False, shuffle_prob: float = 0.5):
         self.samples = samples
         self.apply_to_val = apply_to_val
+        self.shuffle_prob = shuffle_prob
 
     def __len__(self):
         return len(self.samples)
@@ -63,10 +67,11 @@ class PatchShuffleDataset(Dataset):
         item = self.samples[index]
         img = item["image"].convert("RGB")
 
-        if not self.apply_to_val:
-            tensor = T.PILToTensor()(img)
+        # Only shuffle during training, and only with probability shuffle_prob
+        if not self.apply_to_val and random.random() < self.shuffle_prob:
+            tensor = T.PILToTensor()(img).float()
             shuffled = patch_shuffle(tensor)
-            img = T.ToPILImage()(shuffled)
+            img = T.ToPILImage()(shuffled.squeeze(0).to(torch.uint8))
 
         label = int(item["label"])
 
@@ -124,7 +129,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         logits = model(pixel_values)
 
-        loss = criterion(logits, labels)
+        loss = criterion(logits.squeeze(-1), labels)
 
         loss.backward()
 
@@ -149,12 +154,12 @@ def evaluate(model, loader, device):
 
             logits = model(pixel_values)
 
-            probs = torch.sigmoid(logits)
+            probs = torch.sigmoid(logits.squeeze(-1))
 
             all_labels.extend(labels.tolist())
 
             all_probs.extend(probs.cpu().tolist())
-                
+
     auc = roc_auc_score(all_labels, all_probs)
 
     return auc
@@ -170,13 +175,13 @@ def main():
     processor = (AutoProcessor.from_pretrained(MODEL_NAME))
 
     print("Loading SID_Set subset...")
-    samples = load_balanced_sid_subset(samples_per_class=SAMPLES_PER_CLASS,seed=SEED)
-    
+    samples = load_balanced_sid_subset(samples_per_class=SAMPLES_PER_CLASS, seed=SEED)
+
     train_samples, val_samples = split_samples(samples, VAL_RATIO)
     print("Train samples:", len(train_samples))
     print("Validation samples:", len(val_samples))
 
-    train_dataset = PatchShuffleDataset(train_samples)
+    train_dataset = PatchShuffleDataset(train_samples, shuffle_prob=SHUFFLE_PROB)
     val_dataset = PatchShuffleDataset(val_samples, apply_to_val=True)
 
     collate_fn = make_collate_fn(processor)
