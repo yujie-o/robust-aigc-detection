@@ -13,9 +13,10 @@ Create the folder and place your images in this structure:
 
 ```
 robust-aigc-detection/
-└── rawdata/
-    ├── val2017/        # COCO val2017 (.jpg) images [Label 0]
-    └── dalle/        # DALL-E / AIGC (.png / .jpg) images [Label 1]
+raw_data/
+└── wildfake/
+    ├── val2017/
+    └── dalle/ 
 ```
 
 ## 2. Your model
