@@ -112,7 +112,19 @@ The best checkpoint is selected using validation ROC-AUC and saved to:
 checkpoints/baseline_best.pt
 ```
 
-### 2. Run Evaluation
+### 2. Train the model with R2 strategy
+
+```bash
+python experiments/robustness/robust_augmentation_experiment.py --strategy R2
+```
+
+This will train the baseline model with R2 augmentation (JPEG compression → Gaussian blur → resize round-trip, applied to every training image) and perform the evaluation. Results from R2 strategy will be saved in `summary_table.md`  and `R2_conditions.json` under `results/` folder. The model checkpoint will be saved in `experiments/robustness/checkpoints/R2_best.pt`
+
+---
+
+## Running Evaluation and Inference
+
+### Evaluation
 
 <!-- TODO: Add the final evaluation command and instructions here. -->
 
@@ -129,7 +141,7 @@ The evaluated transformations include:
 
 External evaluation is also performed using the WildFake subset to assess performance on data that was not used during training.
 
-### 3. Run Inference
+### Inference
 
 To run inference on an individual image:
 
@@ -219,7 +231,6 @@ robust-aigc-detection/
 ├── src/              # Reusable implementation
 ├── experiments/      # Experiment configurations and results
 ├── demo/             # Interactive Gradio app
-├── notebooks/        # Exploratory analysis
 ├── checkpoints/      # Locally saved model checkpoints
 └── requirements.txt  # Python dependencies
 ```
