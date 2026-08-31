@@ -16,6 +16,8 @@ venv/
 /raw_data/
 results/R0_conditions.json
 results/R1_conditions.json
+results/R2_conditions.json
+results/R3_conditions.json
 
 # Model weights / checkpoints
 checkpoints/
