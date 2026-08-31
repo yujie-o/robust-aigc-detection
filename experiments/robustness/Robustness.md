@@ -3,7 +3,7 @@
 ## Robustness augmentation experiment
 
 This folder contains the experiment-only work for the robustness study.
-The shared baseline code in [src/train.py](../../src/train.py) remains the control reference.
+The shared baseline code in [src/train.py](../../src/train.py) [src/evalutaion/run_evaluation.py] remains the control reference (../../src/evaluation/run_evaluation.py).
 
 ## Objective
 
@@ -73,43 +73,43 @@ For each strategy, record:
 
 ## Experimental results
 
-All experiments trained on 20 samples per class for 1 epoch with batch size 2.
+All experiments were run with 1000 samples per class, 1 epoch, and batch size 4 (using validation dataset).
 
-### Results summary
+### Results summary (for validation samples)
 
-| Strategy | Clean |  JPEG |  Blur | Resize | Noise | Color |  Crop | Avg robust |   Gap |
-| -------- | ----: | ----: | ----: | -----: | ----: | ----: | ----: | ---------: | ----: |
-| R0       | 1.000 | 0.938 | 1.000 |  0.938 | 0.875 | 1.000 | 0.938 |  **0.948** | 0.052 |
-| R1       | 1.000 | 1.000 | 0.938 |  0.938 | 0.938 | 1.000 | 0.938 |  **0.958** | 0.042 |
-| R2       | 1.000 | 0.875 | 0.938 |  0.938 | 0.875 | 1.000 | 0.938 |  **0.927** | 0.073 |
-| R3       | 1.000 | 0.875 | 0.938 |  0.938 | 0.938 | 1.000 | 0.938 |  **0.948** | 0.052 |
+| Strategy |    Clean |     JPEG |     Blur |   Resize |    Noise |    Color |     Crop | Avg robust |      Gap |
+| -------- | -------: | -------: | -------: | -------: | -------: | -------: | -------: | ---------: | -------: |
+| R0       | 0.998475 | 0.995600 | 0.997450 | 0.998150 | 0.989325 | 0.998075 | 0.999225 |   0.996304 | 0.002171 |
+| R1       | 0.998575 | 0.996925 | 0.998225 | 0.998425 | 0.992600 | 0.998075 | 0.999200 |   0.997242 | 0.001333 |
+| R2       | 0.998450 | 0.996550 | 0.998275 | 0.998550 | 0.992350 | 0.997475 | 0.998950 |   0.997025 | 0.001425 |
+| R3       | 0.998425 | 0.998375 | 0.997625 | 0.998375 | 0.993350 | 0.998100 | 0.999075 |   0.997483 | 0.001058 |
+
+### Results summary (for test samples)
+
+| Strategy |  Clean |   JPEG |   Blur | Resize |  Noise |  Color |   Crop | Avg robust | External |
+| -------- | -----: | -----: | -----: | -----: | -----: | -----: | -----: | ---------: | -------: |
+| R0       | 0.9985 | 0.9967 | 0.9978 | 0.9982 | 0.9915 | 0.9987 | 0.9992 |     0.9970 |   0.9751 |
+| R1       | 0.9987 | 0.9971 | 0.9981 | 0.9985 | 0.9940 | 0.9986 | 0.9991 |     0.9976 |   0.9814 |
 
 ### Key findings
 
-1. **All strategies maintain perfect clean performance (1.0 AUC)** — no accuracy degradation on authentic images.
+1. **The clean performance is already extremely high for all strategies**, with all values above 0.9984 AUC. This means the detector is separating real vs AI images very strongly even without heavy augmentation.
 
-2. **R1 (single random augmentation) is the best strategy** — achieves the highest average robust AUC (0.958) and the smallest clean-vs-robustness gap (0.042).
+2. **R3 has the best average robust AUC** at 0.997483, narrowly outperforming R1 at 0.997242 and R2 at 0.997025. The difference is small, but R3 is the strongest on average over all challenge conditions.
 
-3. **R2 (composite transform JPEG+blur+resize) is the weakest** — performs worst on JPEG (0.875) and noise (0.875), with the largest gap (0.073). This suggests that the fixed composite is too aggressive during training, causing overfitting to that specific perturbation pattern.
+3. **R1 has the best clean AUC** at 0.998575 and the smallest gap between clean and robust performance after R3. This makes R1 a very strong choice if the goal is to maximize both clean and robust performance together.
 
-4. **Noise is the hardest challenge** — all strategies drop below 0.94 on noise, with R0 and R2 dropping to 0.875. This indicates that noise perturbations are harder to robustness-train for than compression or blur.
+4. **Noise remains the hardest condition** for all strategies, with the lowest AUCs across the board (R0: 0.989325, R1: 0.992600, R2: 0.992350, R3: 0.993350). This is the main remaining robustness weakness.
 
-5. **R0 and R3 perform equivalently** — both achieve 0.948 average robust AUC. R3's random 1–2 transforms provide no advantage over R0 on this small subset, suggesting that diversity during training may require more data to show benefits.
+5. **The overall spread between strategies is very small**. All models are within about 0.0015 AUC of each other on robust mean performance, indicating that the first epoch is already highly effective on this validation split.
 
 ### Recommended strategy
 
-**Use R1** — training with a single random augmentation per batch provides the best balance:
+**If the goal is the strongest average robust performance, choose R3.**
 
-- Maintains perfect clean detection (1.0)
-- Achieves strongest robustness across all perturbations
-- Minimal implementation overhead
+**If the goal is the best clean performance with nearly the same robustness, choose R1.**
 
-### Next steps
-
-1. Validate on the full dataset with more epochs to confirm R1 superiority.
-2. Investigate why noise is so challenging — consider stronger noise augmentation during training.
-3. Test R2 variants with adaptive or learned composite transforms instead of fixed.
-4. Compare computational cost vs robustness gain for R1 in production.
+The practical difference is tiny, and both are stronger than the clean baseline (R0) on robust average, while preserving very strong clean AUC.
 
 ## How to Reproduce
 
@@ -122,19 +122,14 @@ pip install -r requirements.txt
 ```
 
 2. The project requires the SID_Set dataset to be available via Hugging Face Datasets (streaming mode).
+3. The project requires the testing datasets to be under `raw_data\wildfake\<dataset_name>`
 
 ### Running Individual Strategies
 
-To run a single strategy (e.g., R0) with custom parameters:
+To run a single strategy (e.g., R2):
 
 ```bash
-cd experiments/robustness
-python robust_augmentation_experiment.py \
-  --strategy R0 \
-  --samples-per-class 1000 \
-  --epochs 5 \
-  --batch-size 4 \
-  --val-ratio 0.2
+python experiments/robustness/robust_augmentation_experiment.py --strategy R2
 ```
 
 **Parameters:**
@@ -151,12 +146,7 @@ python robust_augmentation_experiment.py \
 To run all four strategies sequentially:
 
 ```bash
-cd experiments/robustness
-python robust_augmentation_experiment.py \
-  --all \
-  --samples-per-class 1000 \
-  --epochs 5 \
-  --batch-size 4
+python experiments/robustness/robust_augmentation_experiment.py --all
 ```
 
 ### Output Structure
@@ -170,46 +160,15 @@ checkpoints/
 ├── R2_best.pt
 └── R3_best.pt
 
+
+The experiment generates the following files in `results/`:
+
 results/
-├── R0_summary.json
-├── R1_summary.json
-├── R2_summary.json
-├── R3_summary.json
-└── strategy_summary.json
-```
-
-### Output Format
-
-Each `R{0,1,2,3}_summary.json` contains:
-
-```json
-{
-  "strategy": "R0",
-  "samples_per_class": 1000,
-  "epochs": 5,
-  "batch_size": 4,
-  "val_ratio": 0.2,
-  "best_val_auc": 0.95,
-  "clean_auc": 0.95,
-  "jpeg_auc": 0.92,
-  "blur_auc": 0.94,
-  "resize_auc": 0.91,
-  "noise_auc": 0.88,
-  "color_auc": 0.94,
-  "crop_auc": 0.93,
-  "best_epoch": 3
-}
-```
-
-The `strategy_summary.json` aggregates results from all four strategies:
-
-```json
-[
-  { "strategy": "R0", ... },
-  { "strategy": "R1", ... },
-  { "strategy": "R2", ... },
-  { "strategy": "R3", ... }
-]
+├── R0_conditions.json
+├── R1_conditions.json
+├── R2_conditions.json
+├── R3_conditions.json
+└── summary_table.md
 ```
 
 ### Checkpoint Format
@@ -239,7 +198,6 @@ model.eval()
 
 ## Reproducibility Notes
 
-- All experiments use a fixed random seed (default: 42) for reproducibility
+- All experiments use a fixed random seed (default: 42) and fixed parameters for reproducibility
 - The dataset is loaded via streaming, so the exact images may vary based on Hugging Face dataset updates
 - GPU/CPU availability affects training speed but not results
-- Results from small sample sizes (20 per class in the table above) should be validated on the full dataset

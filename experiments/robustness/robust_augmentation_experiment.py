@@ -1,56 +1,50 @@
 import argparse
 import json
-import random
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader, Dataset
+
 from transformers import AutoProcessor
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-RESULTS_DIR = ROOT_DIR / "experiments" / "robustness"
 SRC_DIR = ROOT_DIR / "src"
 sys.path.insert(0, str(SRC_DIR))
+
+# --- Single source of truth for all data/split/training constants ---------
+from train import (
+    SEED,
+    SAMPLES_PER_CLASS,
+    VAL_RATIO,
+    BATCH_SIZE,
+    EPOCHS,
+    LEARNING_RATE,
+    set_seed,
+    split_samples,
+    make_collate_fn,
+    train_one_epoch,
+    evaluate,
+)
 
 from augmentation import apply_augmentation_strategy
 from data.sid_dataset import load_balanced_sid_subset
 from models.baseline import AIGCDetector, MODEL_NAME
 
-SEED = 42
-VAL_RATIO = 0.2
-LEARNING_RATE = 1e-3
-BATCH_SIZE = 4
-EPOCHS = 1
+# --- Single source of truth for evaluation -------------------------------
+EVAL_SCRIPT_DIR = SRC_DIR / "evaluation"
+sys.path.insert(0, str(EVAL_SCRIPT_DIR))
+from evaluation.run_evaluation import (
+    run_full_combined_evaluation,
+    RESULTS_DIR as EVAL_RESULTS_DIR,
+)
 
-
-def set_seed(seed: int = SEED):
-    random.seed(seed)
-    torch.manual_seed(seed)
-
-
-def split_samples(samples, val_ratio: float = VAL_RATIO, seed: int = SEED):
-    real = [x for x in samples if int(x["label"]) == 0]
-    ai = [x for x in samples if int(x["label"]) == 1]
-
-    rng = random.Random(seed)
-    rng.shuffle(real)
-    rng.shuffle(ai)
-
-    val_real_count = int(len(real) * val_ratio)
-    val_ai_count = int(len(ai) * val_ratio)
-
-    val_samples = real[:val_real_count] + ai[:val_ai_count]
-    train_samples = real[val_real_count:] + ai[val_ai_count:]
-    rng.shuffle(train_samples)
-    rng.shuffle(val_samples)
-    return train_samples, val_samples
-
+CHECKPOINT_DIR = ROOT_DIR / "experiments" / "robustness" / "checkpoints"
 
 class StrategyDataset(Dataset):
-    """Dataset wrapper that applies a specific augmentation strategy to training items."""
+    """Applies a training-time augmentation strategy. Never applied to val data."""
 
     def __init__(self, samples, strategy: str, apply_to_val: bool = False):
         self.samples = samples
@@ -70,95 +64,46 @@ class StrategyDataset(Dataset):
         label = int(item["label"])
         return image, label
 
+def run_strategy(
+    strategy: str,
+    epochs: int = EPOCHS,
+    batch_size: int = BATCH_SIZE,
+    samples_per_class: int = SAMPLES_PER_CLASS,
+    val_ratio: float = VAL_RATIO,
+    seed: int = SEED,
+):
+    """Train one strategy's model, then evaluate it with run_evaluation.py's
+    combined evaluator so it lands in the shared summary table.
 
-def make_collate_fn(processor):
-    def collate_fn(batch):
-        images, labels = zip(*batch)
-        inputs = processor(images=list(images), return_tensors="pt")
-        labels = torch.tensor(labels, dtype=torch.float32)
-        return inputs["pixel_values"], labels
+    samples_per_class/val_ratio/seed default to train.py's constants so the
+    split matches the baseline out of the box, but can be overridden - just
+    know that doing so means this run's val split will no longer match
+    train.py's, so its numbers aren't directly comparable to the baseline
+    row in summary_table.md.
+    """
 
-    return collate_fn
-
-
-def train_one_epoch(model, loader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0.0
-
-    for pixel_values, labels in loader:
-        pixel_values = pixel_values.to(device)
-        labels = labels.to(device)
-
-        optimizer.zero_grad()
-        logits = model(pixel_values)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-
-    return total_loss / max(len(loader), 1)
-
-
-@torch.no_grad()
-def evaluate(model, loader, device):
-    model.eval()
-    all_labels = []
-    all_probs = []
-
-    for pixel_values, labels in loader:
-        pixel_values = pixel_values.to(device)
-        logits = model(pixel_values)
-        probs = torch.sigmoid(logits)
-        all_labels.extend(labels.tolist())
-        all_probs.extend(probs.cpu().tolist())
-
-    auc = roc_auc_score(all_labels, all_probs)
-    return auc
-
-
-def evaluate_robustness(model, processor, samples, device, transform_name: str = "clean"):
-    model.eval()
-    all_labels = []
-    all_probs = []
-
-    for item in samples:
-        image = item["image"].convert("RGB")
-
-        if transform_name != "clean":
-            image = apply_augmentation_strategy(image, transform_name)
-
-        inputs = processor(images=image, return_tensors="pt")
-        pixel_values = inputs["pixel_values"].to(device)
-
-        with torch.no_grad():
-            logits = model(pixel_values)
-            probs = torch.sigmoid(logits).cpu().squeeze(0).item()
-
-        all_labels.append(int(item["label"]))
-        all_probs.append(probs)
-
-    return roc_auc_score(all_labels, all_probs)
-
-
-def run_strategy(strategy: str, samples_per_class: int = 1000, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE, val_ratio: float = VAL_RATIO, seed: int = SEED):
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     processor = AutoProcessor.from_pretrained(MODEL_NAME)
     model = AIGCDetector(freeze_backbone=True).to(device)
 
+    # Same samples, same split as train.py by default -> R0-R3 and the
+    # baseline model are validated on identical held-out data unless the
+    # caller explicitly overrides samples_per_class/val_ratio/seed.
     samples = load_balanced_sid_subset(samples_per_class=samples_per_class, seed=seed)
-    train_samples, val_samples = split_samples(samples, val_ratio=val_ratio, seed=seed)
+    train_samples, val_samples = split_samples(samples, val_ratio)
 
     train_dataset = StrategyDataset(train_samples, strategy=strategy)
     val_dataset = StrategyDataset(val_samples, strategy="R0", apply_to_val=True)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=make_collate_fn(processor))
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=make_collate_fn(processor))
+    collate_fn = make_collate_fn(processor)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     classifier_params = [p for p in model.parameters() if p.requires_grad]
     if not classifier_params:
-        raise RuntimeError("No trainable parameters found in the model. Check the backbone freeze configuration.")
+        raise RuntimeError("No trainable parameters found. Check the backbone freeze configuration.")
 
     optimizer = torch.optim.AdamW(classifier_params, lr=LEARNING_RATE)
     criterion = nn.BCEWithLogitsLoss()
@@ -180,70 +125,87 @@ def run_strategy(strategy: str, samples_per_class: int = 1000, epochs: int = EPO
     if best_state is None:
         raise RuntimeError(f"No valid checkpoint produced for strategy={strategy}")
 
-    out_dir = RESULTS_DIR / "checkpoints"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_path = out_dir / f"{strategy}_best.pt"
-    torch.save({"model_state_dict": best_state, "strategy": strategy, "val_auc": best_auc, "epoch": best_epoch}, ckpt_path)
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    ckpt_path = CHECKPOINT_DIR / f"{strategy}_best.pt"
+    torch.save(
+        {"model_state_dict": best_state, "strategy": strategy, "val_auc": best_auc, "epoch": best_epoch},
+        ckpt_path,
+    )
 
-    clean_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="clean")
-    jpeg_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="jpeg")
-    blur_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="blur")
-    resize_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="resize")
-    noise_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="noise")
-    color_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="color")
-    crop_auc = evaluate_robustness(model, processor, val_samples, device, transform_name="crop")
+    # Load the best checkpoint's weights back into the in-memory model before
+    # evaluating, so evaluation matches exactly what was saved (not
+    # whatever the model's weights happen to be after the final epoch).
+    model.load_state_dict(best_state)
+    model.eval()
 
-    result = {
-        "strategy": strategy,
-        "samples_per_class": samples_per_class,
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "val_ratio": val_ratio,
-        "best_val_auc": best_auc,
-        "clean_auc": clean_auc,
-        "jpeg_auc": jpeg_auc,
-        "blur_auc": blur_auc,
-        "resize_auc": resize_auc,
-        "noise_auc": noise_auc,
-        "color_auc": color_auc,
-        "crop_auc": crop_auc,
-        "best_epoch": best_epoch,
-    }
+    print(f"\nRunning combined evaluation (SID_Set + WildFake) for {strategy} via run_evaluation.py...")
+    EVAL_RESULTS_DIR.mkdir(exist_ok=True)
 
-    result_path = RESULTS_DIR / "results" / f"{strategy}_summary.json"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    eval_args = SimpleNamespace(
+        checkpoint=str(ckpt_path),
+        model_name=strategy,
+        samples_per_class=samples_per_class,
+        batch_size=batch_size,
+    )
+    run_full_combined_evaluation(model, device, eval_args)
 
-    return result
-
+    # run_full_combined_evaluation already wrote
+    # results/{strategy}_conditions.json and appended a row to
+    # results/summary_table.md - read the JSON back so callers of
+    # run_strategy() still get a return value if they want one.
+    result_path = EVAL_RESULTS_DIR / f"{strategy}_conditions.json"
+    return json.loads(result_path.read_text(encoding="utf-8"))
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a controlled augmentation experiment against the baseline SigLIP2 classifier.")
-    parser.add_argument("--strategy", choices=["R0", "R1", "R2", "R3"], default="R0", help="Which augmentation strategy to apply.")
+    parser = argparse.ArgumentParser(
+        description="Train R0-R3 augmentation strategies and evaluate each with run_evaluation.py's combined evaluator."
+    )
+    parser.add_argument("--strategy", choices=["R0", "R1", "R2", "R3"], default="R0")
     parser.add_argument("--all", action="store_true", help="Run R0/R1/R2/R3 sequentially.")
-    parser.add_argument("--samples-per-class", type=int, default=1000, help="Balanced samples per class in the training subset.")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs for the experiment.")
-    parser.add_argument("--batch-size", type=int, default=4, help="DataLoader batch size.")
-    parser.add_argument("--val-ratio", type=float, default=0.2, help="Validation split ratio.")
-    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--epochs", type=int, default=EPOCHS, help="Training epochs (train.py's EPOCHS by default).")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Batch size (train.py's BATCH_SIZE by default).")
+    parser.add_argument(
+        "--samples-per-class", type=int, default=SAMPLES_PER_CLASS,
+        help="Balanced samples per class (train.py's SAMPLES_PER_CLASS by default). "
+             "Override only if you know this run doesn't need to match the baseline's split.",
+    )
+    parser.add_argument(
+        "--val-ratio", type=float, default=VAL_RATIO,
+        help="Validation split ratio (train.py's VAL_RATIO by default).",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=SEED,
+        help="Split/training seed (train.py's SEED by default).",
+    )
     args = parser.parse_args()
 
-    if args.all:
-        strategies = ["R0", "R1", "R2", "R3"]
-        results = []
-        for strategy in strategies:
-            print(f"\n=== Running {strategy} ===")
-            results.append(run_strategy(strategy=strategy, samples_per_class=args.samples_per_class, epochs=args.epochs, batch_size=args.batch_size, val_ratio=args.val_ratio, seed=args.seed))
+    if (args.samples_per_class, args.val_ratio, args.seed) != (SAMPLES_PER_CLASS, VAL_RATIO, SEED):
+        print(
+            "WARNING: --samples-per-class/--val-ratio/--seed differ from train.py's constants "
+            f"(train.py: {SAMPLES_PER_CLASS}, {VAL_RATIO}, {SEED} | this run: "
+            f"{args.samples_per_class}, {args.val_ratio}, {args.seed}). "
+            "This run's val split will NOT match the baseline model's, so its row in "
+            "summary_table.md won't be directly comparable.\n"
+        )
 
-        summary_path = RESULTS_DIR / "results" / "strategy_summary.json"
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        print(f"\nSaved aggregate summary to {summary_path}")
+    run_kwargs = dict(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        samples_per_class=args.samples_per_class,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+    )
+
+    if args.all:
+        for strategy in ["R0", "R1", "R2", "R3"]:
+            print(f"\n=== Running {strategy} ===")
+            run_strategy(strategy=strategy, **run_kwargs)
+        print(f"\nAll strategies evaluated. See {EVAL_RESULTS_DIR / 'summary_table.md'} for the comparison table.")
         return
 
-    result = run_strategy(strategy=args.strategy, samples_per_class=args.samples_per_class, epochs=args.epochs, batch_size=args.batch_size, val_ratio=args.val_ratio, seed=args.seed)
-    print(json.dumps(result, indent=2))
-
+    result = run_strategy(strategy=args.strategy, **run_kwargs)
+    print(json.dumps(result["summary"], indent=2))
 
 if __name__ == "__main__":
     main()
+
