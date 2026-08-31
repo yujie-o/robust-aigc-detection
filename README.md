@@ -66,6 +66,12 @@ Install the required Python packages using:
 pip install -r requirements.txt
 ```
 
+To run the interactive demo, also install Gradio:
+
+```bash
+pip install gradio
+```
+
 ### 3. Dataset Setup
 
 The training dataset is not included in the repository.
@@ -145,12 +151,74 @@ The output is a continuous probability between `0` and `1`, where a higher score
 
 ---
 
+## Interactive Demo
+
+We provide an interactive Gradio web app that demonstrates the detector end-to-end. Upload an image, optionally apply a post-processing transform, and see the model's prediction in real time. This is the app used in our demo video.
+
+### What It Does
+
+The app wraps our trained detector in a simple web UI with three panels:
+
+1. **Input image** — drag-and-drop or click to upload any image (JPEG, PNG).
+2. **Transform dropdown** — optionally apply one of the six post-processing transform families used during training and evaluation:
+   - JPEG compression (quality 50 or 30)
+   - Gaussian blur (sigma 1.0 or 2.0)
+   - Resize down-then-up (0.5x or 0.25x)
+   - Gaussian noise (sigma 0.05)
+   - Colour jitter
+   - Centre crop (80%)
+3. **Prediction output** — shows the transformed image, a verdict label (Authentic or AI-generated), the raw AI probability (0–1), and a confidence bar.
+
+Under the hood, the app loads a trained `AIGCDetector` checkpoint (the same frozen SigLIP2 backbone + linear probe head described in the [Baseline](#baseline) section) and reports the sigmoid probability that the image is AI-generated.
+
+### Running the App
+
+Default (loads `experiments/robustness/checkpoints/R3_best.pt`):
+
+```bash
+python demo/app.py
+```
+
+Point at a specific checkpoint:
+
+```bash
+python demo/app.py --checkpoint experiments/robustness/checkpoints/R3_best.pt
+```
+
+Other flags:
+
+```bash
+python demo/app.py --port 7861          # use a different local port
+python demo/app.py --share              # create a public gradio.live link
+```
+
+Once launched, open the URL printed in the terminal, typically `http://127.0.0.1:7860`.
+
+**First launch note:** The SigLIP2 backbone weights (~400 MB) are downloaded from HuggingFace on first run. Subsequent launches use the cached copy and start in a few seconds.
+
+### Troubleshooting
+
+**`ModuleNotFoundError: No module named 'gradio'`**
+Run `pip install gradio` in your active environment.
+
+**`FileNotFoundError: Checkpoint not found`**
+Train a strategy first, or point `--checkpoint` at an existing `.pt` file. Run `dir experiments\robustness\checkpoints` to see what's available.
+
+**Slow first launch**
+Normal — HuggingFace is downloading the backbone weights. Wait for the Gradio URL to appear.
+
+**CUDA out of memory**
+The app auto-detects CPU vs GPU. To force CPU, edit `demo/app.py` and change `DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")` to `DEVICE = torch.device("cpu")`. Inference is slower but works fine for a demo.
+
+---
+
 ## Project Structure
 
 ```text
 robust-aigc-detection/
 ├── src/              # Reusable implementation
 ├── experiments/      # Experiment configurations and results
+├── demo/             # Interactive Gradio app
 ├── notebooks/        # Exploratory analysis
 ├── checkpoints/      # Locally saved model checkpoints
 └── requirements.txt  # Python dependencies
