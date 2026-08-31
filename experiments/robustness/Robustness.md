@@ -3,7 +3,9 @@
 ## Robustness augmentation experiment
 
 This folder contains the experiment-only work for the robustness study.
-The shared baseline code in [src/train.py](../../src/train.py) [src/evalutaion/run_evaluation.py] remains the control reference (../../src/evaluation/run_evaluation.py).
+The shared baseline code — [`src/train.py`](../../src/train.py) and
+[`src/evaluation/run_evaluation.py`](../../src/evaluation/run_evaluation.py) —
+remains the control reference.
 
 ## Objective
 
@@ -35,16 +37,24 @@ The same model can then be evaluated on multiple conditions:
 
 This is important: the evaluation is not restricted to the training condition. A model trained on clean data (R0) is still tested on corrupted images to measure robustness. A model trained with augmentations (R1/R2/R3) is also evaluated on clean and corrupted data to check the clean-vs-robustness trade-off.
 
+For R1 and R3, the specific transform(s) picked for each training image are
+randomised at training time and are not implied by the strategy name alone.
+
 ## How the robustness evaluation works
 
-For each trained strategy:
+Evaluation calls
+`run_full_combined_evaluation()` from `src/evaluation/run_evaluation.py`
+directly. For each trained strategy:
 
-1. Train the model on the selected strategy-specific dataset.
-2. Evaluate the same trained model on the validation set under multiple perturbations.
-3. Compute ROC-AUC for each condition.
-4. Compare the clean score against the perturbed scores.
+1. Train the model on the selected strategy-specific dataset (`R0`–`R3`), reusing `train.py`'s `SAMPLES_PER_CLASS`, `VAL_RATIO`, and `SEED` by default so the split matches the baseline model.
+2. Save the best-val-AUC checkpoint.
+3. Reload those weights and run the shared combined evaluator, which:
+   - Re-derives the same SID_Set validation split (same seed) and evaluates it under all 14 fixed perturbation conditions (clean, 4× JPEG quality levels, 3× blur, 2× resize, 3× noise, color jitter, crop).
+   - Runs a clean-only pass over a local WildFake subset for external generalisation.
+   - Computes ROC-AUC per condition, per-group averages, degradation vs. clean, the JPEG-quality trend, and the internal-vs-external AUC gap.
+4. Append one row to `results/summary_table.md` and write `results/{strategy}_conditions.json` with full per-image predictions.
 
-This answers the key question: does the model still separate real vs AI images after JPEG, blur, resize, noise, color shifts, or cropping?
+This answers the key question: does the model still separate real vs AI images after JPEG, blur, resize, noise, color shifts, or cropping — and does it generalise beyond the dataset it was trained on?
 
 ## Real-world rationale
 
@@ -69,47 +79,46 @@ For each strategy, record:
 - color AUC
 - crop AUC
 - average robust AUC
+- external (WildFake) AUC
 - clean-vs-robustness gap
 
 ## Experimental results
 
-All experiments were run with 1000 samples per class, 1 epoch, and batch size 4 (using validation dataset).
+All experiments were run with 1000 samples per class, 1 epoch, batch size 4,
+and the default `val_ratio=0.2`/`seed=42` inherited from `train.py`. Internal
+scores are computed on the held-out SID_Set validation split (400 images);
+external scores are computed on a local WildFake subset (COCO `val2017` as
+real, the `dalle` generator subfolder as fake), sampled to the same
+`samples-per-class` used for training.
 
-### Results summary (for validation samples)
+### Results summary
 
-| Strategy |    Clean |     JPEG |     Blur |   Resize |    Noise |    Color |     Crop | Avg robust |      Gap |
-| -------- | -------: | -------: | -------: | -------: | -------: | -------: | -------: | ---------: | -------: |
-| R0       | 0.998475 | 0.995600 | 0.997450 | 0.998150 | 0.989325 | 0.998075 | 0.999225 |   0.996304 | 0.002171 |
-| R1       | 0.998575 | 0.996925 | 0.998225 | 0.998425 | 0.992600 | 0.998075 | 0.999200 |   0.997242 | 0.001333 |
-| R2       | 0.998450 | 0.996550 | 0.998275 | 0.998550 | 0.992350 | 0.997475 | 0.998950 |   0.997025 | 0.001425 |
-| R3       | 0.998425 | 0.998375 | 0.997625 | 0.998375 | 0.993350 | 0.998100 | 0.999075 |   0.997483 | 0.001058 |
-
-### Results summary (for test samples)
-
-| Strategy |  Clean |   JPEG |   Blur | Resize |  Noise |  Color |   Crop | Avg robust | External |
-| -------- | -----: | -----: | -----: | -----: | -----: | -----: | -----: | ---------: | -------: |
-| R0       | 0.9985 | 0.9967 | 0.9978 | 0.9982 | 0.9915 | 0.9987 | 0.9992 |     0.9970 |   0.9751 |
-| R1       | 0.9987 | 0.9971 | 0.9981 | 0.9985 | 0.9940 | 0.9986 | 0.9991 |     0.9976 |   0.9814 |
+| Model | Clean  | JPEG   | Blur   | Resize | Noise  | Color  | Crop   | Robust Mean | External |
+| ----- | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ----------- | -------- |
+| R0    | 0.9985 | 0.9967 | 0.9978 | 0.9982 | 0.9915 | 0.9987 | 0.9992 | 0.9970      | 0.9751   |
+| R1    | 0.9987 | 0.9971 | 0.9981 | 0.9985 | 0.9940 | 0.9986 | 0.9991 | 0.9976      | 0.9814   |
+| R2    | 0.9985 | 0.9971 | 0.9981 | 0.9986 | 0.9938 | 0.9986 | 0.9989 | 0.9975      | 0.9871   |
+| R3    | 0.9984 | 0.9970 | 0.9980 | 0.9983 | 0.9939 | 0.9981 | 0.9990 | 0.9974      | 0.9827   |
 
 ### Key findings
 
-1. **The clean performance is already extremely high for all strategies**, with all values above 0.9984 AUC. This means the detector is separating real vs AI images very strongly even without heavy augmentation.
+1. **Clean performance is already extremely high for all strategies**, with all values above 0.9984 AUC. This means the detector is separating real vs AI images very strongly even without heavy augmentation.
 
-2. **R3 has the best average robust AUC** at 0.997483, narrowly outperforming R1 at 0.997242 and R2 at 0.997025. The difference is small, but R3 is the strongest on average over all challenge conditions.
+2. **R1 has the best clean AUC** at 0.9987, and the best robust mean at 0.9976 which is the strongest combination of "don't hurt clean accuracy" and "improve robustness" of the four strategies.
 
-3. **R1 has the best clean AUC** at 0.998575 and the smallest gap between clean and robust performance after R3. This makes R1 a very strong choice if the goal is to maximize both clean and robust performance together.
+3. **R2 has the best external (WildFake) generalisation** at 0.9871, well ahead of R0 (0.9751), R1 (0.9814), and R3 (0.9827). Its fixed JPEG→blur→resize composite most closely resembles the kind of degradation real-world images (re-encoded, resized, mildly compressed) actually go through, which likely explains the generalisation gain.
 
-4. **Noise remains the hardest condition** for all strategies, with the lowest AUCs across the board (R0: 0.989325, R1: 0.992600, R2: 0.992350, R3: 0.993350). This is the main remaining robustness weakness.
+4. **Noise remains the hardest internal condition** for every strategy (lowest column-wise AUC across the board), but augmentation training closes much of that gap: R0 sits at 0.9915 while R1/R2/R3 are all ≥0.9938.
 
-5. **The overall spread between strategies is very small**. All models are within about 0.0015 AUC of each other on robust mean performance, indicating that the first epoch is already highly effective on this validation split.
+5. **The spread between strategies is small on internal metrics** (≤0.0006 AUC on robust mean) but noticeably larger on external generalisation (0.9751–0.9871, a 0.012 spread) — the external benchmark is the more discriminating signal between strategies here, since all four already saturate the internal SID_Set conditions.
 
 ### Recommended strategy
 
-**If the goal is the strongest average robust performance, choose R3.**
+- **If external generalisation to real-world / out-of-distribution AI images is the priority, choose R2.** It has the largest external AUC by a clear margin, at a negligible cost to clean/internal-robust performance.
+- **If the priority is maximizing performance on data that looks like SID_Set (clean + the fixed corruption battery), choose R1.** It has the best clean AUC and best internal robust mean, with the smallest clean-vs-robust gap among the augmented strategies.
+- **R0 (no augmentation) is not recommended** — it's dominated by every augmented strategy on both internal robust mean and external generalisation, at no clean-AUC advantage worth keeping.
 
-**If the goal is the best clean performance with nearly the same robustness, choose R1.**
-
-The practical difference is tiny, and both are stronger than the clean baseline (R0) on robust average, while preserving very strong clean AUC.
+Given how close R1 and R2 are internally, and that external generalisation is the more differentiating and arguably more decision-relevant metric for real-world deployment, **R2 is the overall recommendation** unless the target distribution is known to closely match SID_Set, in which case R1 is preferable.
 
 ## How to Reproduce
 
@@ -121,8 +130,13 @@ The practical difference is tiny, and both are stronger than the clean baseline 
 pip install -r requirements.txt
 ```
 
-2. The project requires the SID_Set dataset to be available via Hugging Face Datasets (streaming mode).
-3. The project requires the testing datasets to be under `raw_data\wildfake\<dataset_name>`
+2. **SID_Set** is fetched automatically — it streams from the Hugging Face Hub (`saberzl/SID_Set`) the first time it's needed, no manual download required. It's cached under HF's own cache directory, not under this project's `raw_data/`.
+3. **WildFake is not auto-downloaded.** You must manually populate:
+   ```
+   raw_data/wildfake/val2017/   # real images (COCO val2017)
+   raw_data/wildfake/dalle/     # fake images (WildFake's "dalle" generator subset)
+   ```
+   `robust_augmentation_experiment.py` checks for both folders **before training starts** and fails fast with a clear error if either is missing — this avoids wasting a full training run only to fail during the external-evaluation step at the end.
 
 ### Running Individual Strategies
 
@@ -135,11 +149,17 @@ python experiments/robustness/robust_augmentation_experiment.py --strategy R2
 **Parameters:**
 
 - `--strategy`: Choose from `R0`, `R1`, `R2`, `R3`
-- `--samples-per-class`: Number of balanced samples per class (default: 1000)
-- `--epochs`: Training epochs (default: 1)
-- `--batch-size`: DataLoader batch size (default: 4)
-- `--val-ratio`: Validation split ratio (default: 0.2)
-- `--seed`: Random seed for reproducibility (default: 42)
+- `--epochs`: Training epochs (default: `train.py`'s `EPOCHS`, currently 1)
+- `--batch-size`: DataLoader batch size (default: `train.py`'s `BATCH_SIZE`, currently 4)
+- `--samples-per-class`: Balanced samples per class (default: `train.py`'s `SAMPLES_PER_CLASS`, currently 1000)
+- `--val-ratio`: Validation split ratio (default: `train.py`'s `VAL_RATIO`, currently 0.2)
+- `--seed`: Random seed for reproducibility (default: `train.py`'s `SEED`, currently 42)
+
+`--samples-per-class`, `--val-ratio`, and `--seed` default to `train.py`'s
+constants so every strategy's validation split matches the baseline model's
+out of the box. They can be overridden, but doing so means that run's
+results won't be directly comparable to the baseline row — the script
+prints a warning if any of the three differ from `train.py`'s values.
 
 ### Running All Strategies
 
@@ -151,18 +171,21 @@ python experiments/robustness/robust_augmentation_experiment.py --all
 
 ### Output Structure
 
-The experiment generates the following files in `experiments/robustness/`:
+The experiment generates the following files in `experiments/robustness/checkpoints/`:
 
 ```
 checkpoints/
 ├── R0_best.pt
 ├── R1_best.pt
 ├── R2_best.pt
-└── R3_best.pt
+├── R3_best.pt
+```
 
+And the following in `results/` (shared with `run_evaluation.py` — rows are
+appended, so re-running a strategy adds a new row rather than replacing the
+old one):
 
-The experiment generates the following files in `results/`:
-
+```
 results/
 ├── R0_conditions.json
 ├── R1_conditions.json
@@ -178,9 +201,9 @@ Each `R{0,1,2,3}_best.pt` contains:
 ```python
 {
   "model_state_dict": {...},      # Trained classifier weights
-  "strategy": "R0",                # Strategy used
-  "val_auc": 0.95,                 # Best validation AUC
-  "epoch": 3                        # Epoch where best AUC was achieved
+  "strategy": "R0",               # Strategy used
+  "val_auc": 0.95,                # Best validation AUC (during training, on clean val data)
+  "epoch": 3                      # Epoch where best AUC was achieved
 }
 ```
 
@@ -198,6 +221,8 @@ model.eval()
 
 ## Reproducibility Notes
 
-- All experiments use a fixed random seed (default: 42) and fixed parameters for reproducibility
-- The dataset is loaded via streaming, so the exact images may vary based on Hugging Face dataset updates
-- GPU/CPU availability affects training speed but not results
+- All experiments use a fixed random seed (default: 42, sourced from `train.py`) and fixed parameters for reproducibility.
+- The SID_Set split is deterministic given the seed, but is loaded via streaming, so the exact images may vary based on Hugging Face dataset updates upstream.
+- The random transform(s) picked per training image for R1/R3 are also deterministic given the seed, **as long as the training `DataLoader` uses `num_workers=0`** (the default here). Adding multiprocess data loading workers without a `worker_init_fn` would break this determinism.
+- GPU/CPU availability affects training speed but not results.
+- WildFake results depend on whatever is currently in `raw_data/wildfake/{val2017,dalle}/` — since that data is manually placed and not versioned by this pipeline, external AUCs are only comparable across runs performed against the same local WildFake snapshot.
