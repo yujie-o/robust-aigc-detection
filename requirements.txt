@@ -5,3 +5,7 @@ torch==2.13.0
 torchvision==0.28.0
 tqdm==4.70.0
 transformers==5.16.1
+modelscope
+addict
+oss2
+simplejson
