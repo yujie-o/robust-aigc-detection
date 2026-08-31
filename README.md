@@ -17,6 +17,8 @@ The detector is evaluated under transformations including:
 
 Our approach begins with a common **SigLIP2-based baseline**, which serves as the foundation for subsequent generalisation, robustness, and hybrid detection experiments.
 
+Our final selected model uses the **R2 robustness augmentation strategy**, where JPEG compression, Gaussian blur, and resize round-trip are applied sequentially to every training image.
+
 ### Baseline
 
 The baseline detector uses the pretrained `google/siglip2-base-patch16-256` model as a frozen image encoder.
@@ -35,17 +37,24 @@ Binary Linear Classifier
 P(AI)
 ```
 
-The SigLIP2 backbone is frozen during baseline training, while the binary classification head is trained to distinguish real and fully AI-generated images.
+The SigLIP2 backbone is frozen during training, while the binary classification head is trained to distinguish real and fully AI-generated images.
 
 ### Dataset
 
-The baseline is trained using **SID_Set**.
+The model is trained using **SID_Set** (`saberzl/SID_Set`).
 
 Labels used:
 
 - `0` — Real image
 - `1` — Fully AI-generated image
 - `2` — Tampered/AI-edited image (excluded)
+
+For external evaluation, we use a subset of **WildFake** consisting of:
+
+- Real images from COCO val2017
+- AI-generated images from DALL-E Advanced
+
+The external evaluation dataset is kept completely separate from the training data.
 
 ---
 
@@ -74,9 +83,15 @@ pip install gradio
 
 ### 3. Dataset Setup
 
-The training dataset is not included in the repository.
+No manual setup is required for the training dataset.
 
-<!-- TODO: Add the final SID_Set folder structure/instructions here. -->
+**SID_Set** is streamed directly from Hugging Face using the `datasets` library:
+
+```text
+saberzl/SID_Set
+```
+
+The training pipeline automatically samples a balanced subset of real (`label 0`) and fully AI-generated (`label 1`) images. Tampered/AI-edited images (`label 2`) are excluded.
 
 For external evaluation using the WildFake subset, organise the dataset as:
 
@@ -92,7 +107,7 @@ where:
 - `val2017/` contains real images from COCO val2017
 - `dalle/` contains AI-generated images from DALL-E Advanced
 
-The external evaluation dataset is kept separate from the training data.
+The WildFake subset is used only for external evaluation and is never used during training.
 
 ---
 
@@ -106,121 +121,138 @@ Run:
 python src/train.py
 ```
 
+The training pipeline streams a balanced subset of SID_Set and trains the binary classification head while keeping the SigLIP2 backbone frozen.
+
 The best checkpoint is selected using validation ROC-AUC and saved to:
 
 ```text
 checkpoints/baseline_best.pt
 ```
 
-### 2. Train the model with R2 strategy
+### 2. Train and Evaluate the R2 Model
+
+Run:
 
 ```bash
 python experiments/robustness/robust_augmentation_experiment.py --strategy R2
 ```
 
-This will train the baseline model with R2 augmentation (JPEG compression → Gaussian blur → resize round-trip, applied to every training image) and perform the evaluation. Results from R2 strategy will be saved in `summary_table.md`  and `R2_conditions.json` under `results/` folder. The model checkpoint will be saved in `experiments/robustness/checkpoints/R2_best.pt`
-
----
-
-## Running Evaluation and Inference
-
-### Evaluation
-
-<!-- TODO: Add the final evaluation command and instructions here. -->
-
-The evaluation pipeline is used to compare the baseline and experimental models under clean and transformed image conditions.
-
-The evaluated transformations include:
-
-- JPEG compression
-- Gaussian blur
-- Resizing
-- Gaussian noise
-- Colour jitter
-- Cropping
-
-External evaluation is also performed using the WildFake subset to assess performance on data that was not used during training.
-
-### Inference
-
-To run inference on an individual image:
-
-```bash
-python src/inference.py \
-  --image path/to/image.jpg \
-  --checkpoint checkpoints/baseline_best.pt
-```
-
-Example output:
+The R2 strategy applies the following transformations sequentially to every training image:
 
 ```text
-P(AI): 0.5709
+JPEG Compression
+    ↓
+Gaussian Blur
+    ↓
+Resize Round-Trip
 ```
 
-The output is a continuous probability between `0` and `1`, where a higher score indicates that the image is more likely to be AI-generated.
+After training, the model is evaluated using **ROC-AUC** on clean images, six post-processing transformation families (JPEG compression, Gaussian blur, resizing, Gaussian noise, colour jitter, and cropping), and the external WildFake subset.
 
-<!-- TODO: Add/update the inference command for the final selected model if required. -->
+The trained model checkpoint is saved to:
+
+```text
+experiments/robustness/checkpoints/R2_best.pt
+```
+
+Evaluation results are saved under:
+
+```text
+results/
+├── summary_table.md
+└── R2_conditions.json
+```
+
+`summary_table.md` contains the overall evaluation results, including the average robustness score and external WildFake performance, while `R2_conditions.json` contains the detailed results for each evaluation condition.
 
 ---
 
 ## Interactive Demo
 
-We provide an interactive Gradio web app that demonstrates the detector end-to-end. Upload an image, optionally apply a post-processing transform, and see the model's prediction in real time. This is the app used in our demo video.
+We provide an interactive Gradio web app that demonstrates the detector end-to-end. Users can upload an image, optionally apply a post-processing transform, and view the model's prediction in real time.
+
+The demo uses our final **R2 model**.
 
 ### What It Does
 
-The app wraps our trained detector in a simple web UI with three panels:
+The app provides three main components:
 
-1. **Input image** — drag-and-drop or click to upload any image (JPEG, PNG).
-2. **Transform dropdown** — optionally apply one of the six post-processing transform families used during training and evaluation:
-   - JPEG compression (quality 50 or 30)
-   - Gaussian blur (sigma 1.0 or 2.0)
-   - Resize down-then-up (0.5x or 0.25x)
-   - Gaussian noise (sigma 0.05)
+1. **Input image** — drag and drop or select an image to upload.
+2. **Transform selection** — optionally apply one of the post-processing transformations used during evaluation:
+   - JPEG compression
+   - Gaussian blur
+   - Resize down-then-up
+   - Gaussian noise
    - Colour jitter
-   - Centre crop (80%)
-3. **Prediction output** — shows the transformed image, a verdict label (Authentic or AI-generated), the raw AI probability (0–1), and a confidence bar.
+   - Centre crop
+3. **Prediction output** — displays the transformed image, predicted class, and AI probability.
 
-Under the hood, the app loads a trained `AIGCDetector` checkpoint (the same frozen SigLIP2 backbone + linear probe head described in the [Baseline](#baseline) section) and reports the sigmoid probability that the image is AI-generated.
+The app loads the trained `AIGCDetector` using the same frozen SigLIP2 backbone and linear classification head described above.
+
+The model outputs:
+
+```text
+P(AI) ∈ [0, 1]
+```
+
+where a higher probability indicates that the image is more likely to be AI-generated.
 
 ### Running the App
 
-Default (loads `experiments/robustness/checkpoints/R3_best.pt`):
+By default, the app loads the final R2 model:
 
 ```bash
 python demo/app.py
 ```
 
-Point at a specific checkpoint:
+To specify the R2 checkpoint manually:
 
 ```bash
-python demo/app.py --checkpoint experiments/robustness/checkpoints/R3_best.pt
+python demo/app.py --checkpoint experiments/robustness/checkpoints/R2_best.pt
 ```
 
-Other flags:
+Other available options include:
 
 ```bash
-python demo/app.py --port 7861          # use a different local port
-python demo/app.py --share              # create a public gradio.live link
+python demo/app.py --port 7861
+python demo/app.py --share
 ```
 
-Once launched, open the URL printed in the terminal, typically `http://127.0.0.1:7860`.
+Once launched, open the URL printed in the terminal, typically:
 
-**First launch note:** The SigLIP2 backbone weights (~400 MB) are downloaded from HuggingFace on first run. Subsequent launches use the cached copy and start in a few seconds.
+```text
+http://127.0.0.1:7860
+```
+
+**First launch note:** The SigLIP2 backbone weights are downloaded from Hugging Face on the first run. Subsequent launches use the cached model.
 
 ### Troubleshooting
 
 **`ModuleNotFoundError: No module named 'gradio'`**
-Run `pip install gradio` in your active environment.
+
+Install Gradio:
+
+```bash
+pip install gradio
+```
 
 **`FileNotFoundError: Checkpoint not found`**
-Train a strategy first, or point `--checkpoint` at an existing `.pt` file. Run `dir experiments\robustness\checkpoints` to see what's available.
+
+Train the R2 strategy first or point `--checkpoint` to an existing `.pt` checkpoint.
+
+On Windows, available robustness checkpoints can be checked using:
+
+```bash
+dir experiments\robustness\checkpoints
+```
 
 **Slow first launch**
-Normal — HuggingFace is downloading the backbone weights. Wait for the Gradio URL to appear.
+
+The SigLIP2 backbone may need to be downloaded from Hugging Face during the first launch. Wait for the Gradio URL to appear.
 
 **CUDA out of memory**
-The app auto-detects CPU vs GPU. To force CPU, edit `demo/app.py` and change `DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")` to `DEVICE = torch.device("cpu")`. Inference is slower but works fine for a demo.
+
+The application automatically detects whether CUDA is available. CPU inference can also be used, although it will be slower.
 
 ---
 
@@ -228,10 +260,11 @@ The app auto-detects CPU vs GPU. To force CPU, edit `demo/app.py` and change `DE
 
 ```text
 robust-aigc-detection/
-├── src/              # Reusable implementation
-├── experiments/      # Experiment configurations and results
-├── demo/             # Interactive Gradio app
-├── checkpoints/      # Locally saved model checkpoints
+├── src/              # Core model, training, data and evaluation code
+├── experiments/      # Generalisation, robustness and hybrid experiments
+├── demo/             # Interactive Gradio application
+├── checkpoints/      # Locally saved baseline checkpoints
+├── results/          # Evaluation results and summary tables
 └── requirements.txt  # Python dependencies
 ```
 
@@ -239,15 +272,19 @@ robust-aigc-detection/
 
 ## Limitations and Future Improvements
 
-<!--
-TODO: Add the final reflection here after all experiments are completed.
+While our final R2 model improves robustness to common post-processing transformations, several limitations and opportunities for further improvement remain.
 
-Include:
-- Limitations of the final solution
-- Conditions where the detector performs poorly
-- Computational or inference limitations
-- What could be improved given more time
--->
+- **Limited training data:** Experiments were conducted using a balanced subset of SID_Set due to time and computational constraints. Given more resources, training on a larger and more diverse dataset could further improve the detector's performance and reliability.
+
+- **Limited transformation coverage:** R2 specifically trains with JPEG compression, Gaussian blur, and resize round-trip. Although the model is evaluated against additional transformations, real-world images may undergo other distortions or combinations that were not covered in our experiments.
+
+- **Broader generalisation testing:** While the model demonstrates strong performance on the external WildFake subset, this represents only a subset of possible AI-generation methods. Given more time, we would evaluate the detector on additional unseen generators and external datasets to further validate its generalisation.
+
+- **Fixed augmentation strategy:** R2 applies the same sequence of transformations during training. Future work could explore different transformation combinations, augmentation strengths, or adaptive augmentation strategies to further improve robustness.
+
+- **Limited architecture exploration:** Our experiments showed that additional model complexity did not necessarily improve performance. Future work could investigate other lightweight complementary signals while maintaining the efficiency of the frozen SigLIP2 backbone and linear classifier.
+
+Given more time and computational resources, we would train on a larger and more diverse dataset, evaluate against additional AI generators and real-world distortions, and further optimise the augmentation strategy to improve robustness while maintaining strong clean-image and external performance.
 
 ---
 
