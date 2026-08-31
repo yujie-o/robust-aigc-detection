@@ -1,9 +1,3 @@
-"""
-Evaluates a checkpoint on:
-  - Internal held-out samples (clean + 6 challenge transformations)
-  - External WildFake validation subset 
-"""
-
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Sequence, Optional
