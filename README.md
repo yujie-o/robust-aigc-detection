@@ -284,6 +284,8 @@ While our final R2 model improves robustness to common post-processing transform
 
 - **Limited architecture exploration:** Our experiments showed that additional model complexity did not necessarily improve performance. Future work could investigate other lightweight complementary signals while maintaining the efficiency of the frozen SigLIP2 backbone and linear classifier.
 
+- **Explainability via VLM reasoning:** The current detector outputs only a scalar probability, offering no justification for its decision. Future work could pair the classifier with a vision-language model to generate human-readable rationales (e.g. flagging implausible textures, lighting inconsistencies, or anatomical artefacts), improving user trust and making the system more useful in downstream moderation or forensic settings.
+
 Given more time and computational resources, we would train on a larger and more diverse dataset, evaluate against additional AI generators and real-world distortions, and further optimise the augmentation strategy to improve robustness while maintaining strong clean-image and external performance.
 
 ---
